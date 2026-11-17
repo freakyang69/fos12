@@ -1,0 +1,527 @@
+zombie-game.html
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zombie-Shooter</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #111;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: crosshair;
+    }
+
+    #help {
+      position: fixed;
+      left: 12px;
+      bottom: 10px;
+      padding: 8px 10px;
+      background: #0009;
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.5;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="help">WASD: bewegen · Maus: umsehen · Linksklick: schießen · R: Neustart</div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    let width, height;
+
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    const player = { x: 0, z: 0, yaw: 0, health: 100 };
+    const keys = {};
+    const scenery = [];
+
+    let zombies = [];
+    let score = 0;
+    let gameOver = false;
+    let lastShot = 0;
+    let lastTime = performance.now();
+    let damageTimer = 0;
+    let hitFlash = 0;
+
+    const FOV = Math.PI / 3;
+    const focalLength = () => width / (2 * Math.tan(FOV / 2));
+
+    // Feste Dekorationen am Wegesrand
+    function makeScenery() {
+      scenery.length = 0;
+
+      for (let i = 0; i < 65; i++) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        scenery.push({
+          x: side * (5 + Math.random() * 18),
+          z: -10 + Math.random() * 90,
+          type: Math.random() < 0.7 ? "tree" : "rock",
+          size: 0.7 + Math.random() * 0.8
+        });
+      }
+    }
+
+    function spawnZombie() {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 12 + Math.random() * 12;
+
+      zombies.push({
+        x: player.x + Math.sin(angle) * distance,
+        z: player.z + Math.cos(angle) * distance,
+        alive: true,
+        animationOffset: Math.random() * Math.PI * 2
+      });
+    }
+
+    function startGame() {
+      player.x = 0;
+      player.z = 0;
+      player.yaw = 0;
+      player.health = 100;
+      zombies = [];
+      score = 0;
+      gameOver = false;
+      damageTimer = 0;
+      hitFlash = 0;
+
+      makeScenery();
+
+      for (let i = 0; i < 6; i++) spawnZombie();
+    }
+
+    function wrapAngle(angle) {
+      while (angle > Math.PI) angle -= Math.PI * 2;
+      while (angle < -Math.PI) angle += Math.PI * 2;
+      return angle;
+    }
+
+    function shoot() {
+      if (gameOver || performance.now() - lastShot < 250) return;
+      lastShot = performance.now();
+
+      let target = null;
+      let bestAim = Infinity;
+
+      for (const zombie of zombies) {
+        if (!zombie.alive) continue;
+
+        const dx = zombie.x - player.x;
+        const dz = zombie.z - player.z;
+        const distance = Math.hypot(dx, dz);
+        const angle = wrapAngle(Math.atan2(dx, dz) - player.yaw);
+        const aimWidth = Math.atan2(0.45, distance);
+
+        if (Math.abs(angle) < aimWidth && Math.abs(angle) < bestAim) {
+          target = zombie;
+          bestAim = Math.abs(angle);
+        }
+      }
+
+      if (target) {
+        target.alive = false;
+        score++;
+        hitFlash = 0.15;
+        spawnZombie();
+      }
+    }
+
+    canvas.addEventListener("click", () => {
+      if (document.pointerLockElement !== canvas) {
+        canvas.requestPointerLock?.();
+      }
+      shoot();
+    });
+
+    document.addEventListener("mousemove", event => {
+      if (document.pointerLockElement === canvas && !gameOver) {
+        player.yaw += event.movementX * 0.0025;
+      }
+    });
+
+    document.addEventListener("keydown", event => {
+      keys[event.code] = true;
+
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowLeft", "ArrowRight", "Space"].includes(event.code)) {
+        event.preventDefault();
+      }
+
+      if (gameOver && event.code === "KeyR") startGame();
+    });
+
+    document.addEventListener("keyup", event => {
+      keys[event.code] = false;
+    });
+
+    function drawZombie(screenX, feetY, size, time, offset) {
+      const w = size * 0.48;
+      const h = size;
+      const walk = Math.sin(time * 0.008 + offset);
+      const bob = Math.abs(Math.sin(time * 0.008 + offset)) * size * 0.025;
+
+      feetY += bob;
+
+      // Schatten
+      ctx.fillStyle = "#080b08aa";
+      ctx.beginPath();
+      ctx.ellipse(screenX, feetY, w * 0.65, h * 0.07, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Beine bewegen sich beim Laufen
+      ctx.fillStyle = "#263d32";
+      ctx.save();
+      ctx.translate(screenX, feetY - h * 0.27);
+      ctx.rotate(walk * 0.12);
+      ctx.fillRect(-w * 0.37, 0, w * 0.26, h * 0.28);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(screenX, feetY - h * 0.27);
+      ctx.rotate(-walk * 0.12);
+      ctx.fillRect(w * 0.10, 0, w * 0.26, h * 0.28);
+      ctx.restore();
+
+      // Körper
+      ctx.fillStyle = "#526b48";
+      ctx.fillRect(screenX - w / 2, feetY - h * 0.77, w, h * 0.48);
+
+      // Arme schwingen
+      ctx.strokeStyle = "#71845c";
+      ctx.lineWidth = Math.max(3, size * 0.09);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(screenX - w * 0.4, feetY - h * 0.68);
+      ctx.lineTo(screenX - w * 0.78, feetY - h * (0.48 + walk * 0.08));
+      ctx.moveTo(screenX + w * 0.4, feetY - h * 0.68);
+      ctx.lineTo(screenX + w * 0.78, feetY - h * (0.48 - walk * 0.08));
+      ctx.stroke();
+
+      // Kopf
+      ctx.fillStyle = "#91a477";
+      ctx.beginPath();
+      ctx.arc(screenX, feetY - h * 0.87 + bob, w * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Haare
+      ctx.fillStyle = "#263226";
+      ctx.beginPath();
+      ctx.arc(screenX, feetY - h * 0.96 + bob, w * 0.23, Math.PI, Math.PI * 2);
+      ctx.fill();
+
+      // Leuchtende Augen
+      ctx.fillStyle = "#ff5948";
+      ctx.fillRect(screenX - w * 0.16, feetY - h * 0.89 + bob, w * 0.09, h * 0.035);
+      ctx.fillRect(screenX + w * 0.07, feetY - h * 0.89 + bob, w * 0.09, h * 0.035);
+
+      // Mund
+      ctx.fillStyle = "#263226";
+      ctx.fillRect(screenX - w * 0.10, feetY - h * 0.80 + bob, w * 0.20, h * 0.035);
+    }
+
+    function drawTree(screenX, feetY, size, type) {
+      const trunkW = size * 0.16;
+
+      // Schatten
+      ctx.fillStyle = "#090b08aa";
+      ctx.beginPath();
+      ctx.ellipse(screenX, feetY, size * 0.35, size * 0.08, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Stamm
+      ctx.fillStyle = "#302b22";
+      ctx.fillRect(screenX - trunkW / 2, feetY - size * 0.65, trunkW, size * 0.65);
+
+      if (type === "tree") {
+        ctx.fillStyle = "#25382d";
+        ctx.beginPath();
+        ctx.arc(screenX, feetY - size * 0.73, size * 0.34, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#344936";
+        ctx.beginPath();
+        ctx.arc(screenX - size * 0.17, feetY - size * 0.82, size * 0.22, 0, Math.PI * 2);
+        ctx.arc(screenX + size * 0.17, feetY - size * 0.80, size * 0.24, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Ein kahler, unheimlicher Baum
+        ctx.strokeStyle = "#39362d";
+        ctx.lineWidth = Math.max(2, size * 0.07);
+        ctx.beginPath();
+        ctx.moveTo(screenX, feetY - size * 0.4);
+        ctx.lineTo(screenX, feetY - size);
+        ctx.lineTo(screenX - size * 0.25, feetY - size * 0.82);
+        ctx.moveTo(screenX, feetY - size * 0.83);
+        ctx.lineTo(screenX + size * 0.28, feetY - size);
+        ctx.moveTo(screenX - size * 0.12, feetY - size * 0.68);
+        ctx.lineTo(screenX - size * 0.35, feetY - size * 0.62);
+        ctx.stroke();
+      }
+    }
+
+    function drawRock(screenX, feetY, size) {
+      ctx.fillStyle = "#45483e";
+      ctx.beginPath();
+      ctx.ellipse(screenX, feetY - size * 0.12, size * 0.35, size * 0.19, 0, Math.PI, 0);
+      ctx.fill();
+    }
+
+    function drawSky(time, horizon) {
+      const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+      sky.addColorStop(0, "#111a27");
+      sky.addColorStop(0.65, "#3b4146");
+      sky.addColorStop(1, "#77705e");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, width, horizon);
+
+      // Sterne
+      for (let i = 0; i < 45; i++) {
+        const x = (i * 197 + 31) % width;
+        const y = (i * 71 + 17) % Math.max(1, horizon * 0.7);
+        const twinkle = 0.35 + Math.abs(Math.sin(time * 0.002 + i)) * 0.65;
+
+        ctx.fillStyle = `rgba(255,255,220,${twinkle})`;
+        ctx.fillRect(x, y, 2, 2);
+      }
+
+      // Mond
+      ctx.fillStyle = "#e7dfb3";
+      ctx.beginPath();
+      ctx.arc(width * 0.78, horizon * 0.28, Math.min(34, width * 0.035), 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#242b35";
+      ctx.beginPath();
+      ctx.arc(width * 0.80, horizon * 0.25, Math.min(31, width * 0.032), 0, Math.PI * 2);
+      ctx.fill();
+
+      // Wolken bewegen sich langsam über den Himmel
+      for (let i = 0; i < 5; i++) {
+        const cloudWidth = 100 + (i % 3) * 55;
+        const x = ((i * 260 + time * (0.008 + i * 0.001)) % (width + cloudWidth)) - cloudWidth;
+        const y = horizon * (0.18 + (i % 3) * 0.16);
+
+        ctx.fillStyle = "rgba(35, 40, 43, 0.48)";
+        ctx.beginPath();
+        ctx.ellipse(x, y, cloudWidth * 0.48, 13, 0, 0, Math.PI * 2);
+        ctx.ellipse(x - 25, y + 3, cloudWidth * 0.25, 12, 0, 0, Math.PI * 2);
+        ctx.ellipse(x + 28, y + 1, cloudWidth * 0.30, 11, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Dunkle Häuser in der Ferne
+      ctx.fillStyle = "#202621";
+      for (let i = 0; i < 13; i++) {
+        const buildingW = width / 13 + 3;
+        const buildingH = 15 + (i * 37 % 45);
+        const x = i * buildingW - (player.yaw * 18 % buildingW);
+        ctx.fillRect(x, horizon - buildingH, buildingW, buildingH);
+
+        // Fenster
+        ctx.fillStyle = "#b49a56";
+        for (let j = 0; j < 3; j++) {
+          ctx.fillRect(x + 7 + j * 13, horizon - buildingH + 10, 4, 6);
+        }
+        ctx.fillStyle = "#202621";
+      }
+    }
+
+    function drawScene(time) {
+      const horizon = height * 0.43;
+      const focal = focalLength();
+
+      drawSky(time, horizon);
+
+      // Boden
+      const ground = ctx.createLinearGradient(0, horizon, 0, height);
+      ground.addColorStop(0, "#414337");
+      ground.addColorStop(1, "#171b17");
+      ctx.fillStyle = ground;
+      ctx.fillRect(0, horizon, width, height - horizon);
+
+      // Perspektivlinien auf dem Boden
+      ctx.strokeStyle = "rgba(145, 145, 112, 0.22)";
+      ctx.lineWidth = 1;
+
+      for (let i = 1; i <= 10; i++) {
+        const y = horizon + (height - horizon) * (i / 11) ** 2;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // Bäume und Steine perspektivisch zeichnen
+      const visibleScenery = scenery
+        .map(item => {
+          const dx = item.x - player.x;
+          const dz = item.z - player.z;
+          const distance = Math.hypot(dx, dz);
+          const angle = wrapAngle(Math.atan2(dx, dz) - player.yaw);
+          return { item, distance, angle };
+        })
+        .filter(obj => Math.abs(obj.angle) < FOV * 0.9 && obj.distance > 0.5)
+        .sort((a, b) => b.distance - a.distance);
+
+      for (const obj of visibleScenery) {
+        const depth = obj.distance * Math.cos(obj.angle);
+        if (depth <= 0.1) continue;
+
+        const screenX = width / 2 + Math.tan(obj.angle) * focal;
+        const feetY = horizon + focal * 1.05 / depth;
+        const size = Math.min(height, focal * 2.2 / depth) * obj.item.size;
+
+        if (obj.item.type === "rock") {
+          drawRock(screenX, feetY, size);
+        } else {
+          drawTree(screenX, feetY, size, obj.item.type);
+        }
+      }
+
+      // Zombies weiter hinten zuerst zeichnen
+      const visibleZombies = zombies
+        .filter(zombie => zombie.alive)
+        .map(zombie => {
+          const dx = zombie.x - player.x;
+          const dz = zombie.z - player.z;
+          const distance = Math.hypot(dx, dz);
+          const angle = wrapAngle(Math.atan2(dx, dz) - player.yaw);
+          return { zombie, distance, angle };
+        })
+        .filter(obj => Math.abs(obj.angle) < FOV * 0.85 && obj.distance > 0.3)
+        .sort((a, b) => b.distance - a.distance);
+
+      for (const obj of visibleZombies) {
+        const depth = obj.distance * Math.cos(obj.angle);
+        if (depth <= 0.1) continue;
+
+        const screenX = width / 2 + Math.tan(obj.angle) * focal;
+        const size = Math.min(height * 1.3, focal * 1.65 / depth);
+        const feetY = horizon + focal * 1.05 / depth;
+
+        drawZombie(screenX, feetY, size, time, obj.zombie.animationOffset);
+      }
+
+      // Leichter Nebel in der Ferne
+      const fog = ctx.createLinearGradient(0, horizon - 10, 0, horizon + height * 0.35);
+      fog.addColorStop(0, "rgba(180, 174, 145, 0.22)");
+      fog.addColorStop(1, "rgba(180, 174, 145, 0)");
+      ctx.fillStyle = fog;
+      ctx.fillRect(0, horizon - 10, width, height * 0.35);
+
+      // Fadenkreuz
+      ctx.strokeStyle = hitFlash > 0 ? "#ffcc44" : "white";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(width / 2 - 10, height / 2);
+      ctx.lineTo(width / 2 + 10, height / 2);
+      ctx.moveTo(width / 2, height / 2 - 10);
+      ctx.lineTo(width / 2, height / 2 + 10);
+      ctx.stroke();
+
+      // Anzeige
+      ctx.fillStyle = "white";
+      ctx.font = "bold 20px Arial";
+      ctx.textAlign = "left";
+      ctx.fillText(`Punkte: ${score}`, 16, 32);
+      ctx.fillText(`Leben: ${Math.max(0, player.health)}`, 16, 60);
+
+      // Roter Rand, wenn der Spieler Schaden bekommt
+      if (damageTimer > 0.4) {
+        ctx.fillStyle = "rgba(180, 0, 0, 0.15)";
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      if (gameOver) {
+        ctx.fillStyle = "#000a";
+        ctx.fillRect(0, 0, width, height);
+        ctx.textAlign = "center";
+        ctx.fillStyle = "white";
+        ctx.font = "bold 48px Arial";
+        ctx.fillText("GAME OVER", width / 2, height / 2 - 15);
+        ctx.font = "22px Arial";
+        ctx.fillText(`Punkte: ${score} · Drücke R zum Neustart`, width / 2, height / 2 + 30);
+      }
+    }
+
+    function update(delta) {
+      if (gameOver) return;
+
+      if (keys.ArrowLeft) player.yaw -= delta * 1.8;
+      if (keys.ArrowRight) player.yaw += delta * 1.8;
+
+      let forward = 0;
+      let sideways = 0;
+
+      if (keys.KeyW) forward++;
+      if (keys.KeyS) forward--;
+      if (keys.KeyD) sideways++;
+      if (keys.KeyA) sideways--;
+
+      const length = Math.hypot(forward, sideways) || 1;
+      forward /= length;
+      sideways /= length;
+
+      const speed = 5 * delta;
+      player.x += (Math.sin(player.yaw) * forward + Math.cos(player.yaw) * sideways) * speed;
+      player.z += (Math.cos(player.yaw) * forward - Math.sin(player.yaw) * sideways) * speed;
+
+      for (const zombie of zombies) {
+        if (!zombie.alive) continue;
+
+        const dx = player.x - zombie.x;
+        const dz = player.z - zombie.z;
+        const distance = Math.hypot(dx, dz);
+
+        if (distance > 1.1) {
+          zombie.x += (dx / distance) * delta * 1.1;
+          zombie.z += (dz / distance) * delta * 1.1;
+        } else {
+          damageTimer += delta;
+
+          if (damageTimer >= 0.7) {
+            player.health -= 10;
+            damageTimer = 0;
+            if (player.health <= 0) gameOver = true;
+          }
+        }
+      }
+
+      hitFlash = Math.max(0, hitFlash - delta);
+    }
+
+    function gameLoop(now) {
+      const delta = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+
+      update(delta);
+      drawScene(now);
+      requestAnimationFrame(gameLoop);
+    }
+
+    startGame();
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
